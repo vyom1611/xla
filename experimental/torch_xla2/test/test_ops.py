@@ -18,28 +18,16 @@ skiplist = {
     "cholesky",
     "cholesky_solve",
     "diagonal_copy",
-    "digamma",
     "geqrf",
     "histogram", # hard op: AssertionError: Tensor-likes are not close!
     "histogramdd", # TypeError: histogram requires ndarray or scalar arguments, got <class 'list'> at position 1.
-    "igammac",
     "index_reduce",
     "kthvalue",
     "linalg.cholesky",
     "linalg.cholesky_ex",
     "linalg.det",
-    "linalg.ldl_factor",
-    "linalg.ldl_factor_ex",
     "linalg.ldl_solve",
-    "linalg.lstsq",
-    "linalg.lu_factor",
-    "linalg.lu_factor_ex",
     "linalg.lu_solve",
-    "linalg.matrix_norm",
-    "linalg.matrix_power",
-    "linalg.tensorsolve",
-    "lu_unpack",
-    "masked.median",
     "max_pool2d_with_indices_backward",
     "nn.functional.adaptive_avg_pool3d",
     "nn.functional.adaptive_max_pool1d",
@@ -49,8 +37,6 @@ skiplist = {
     "nn.functional.conv_transpose1d",
     "nn.functional.conv_transpose2d",
     "nn.functional.conv_transpose3d",
-    "nn.functional.cosine_embedding_loss",
-    "nn.functional.cosine_similarity",
     "nn.functional.ctc_loss",
     "nn.functional.dropout2d",
     "nn.functional.dropout3d",
@@ -58,58 +44,36 @@ skiplist = {
     "nn.functional.embedding_bag",
     "nn.functional.fractional_max_pool2d",
     "nn.functional.fractional_max_pool3d",
-    "nn.functional.group_norm",
-    "nn.functional.hinge_embedding_loss",
     "nn.functional.interpolate",
-    "nn.functional.margin_ranking_loss",
     "nn.functional.max_pool1d",
     "nn.functional.max_pool2d",
     "nn.functional.max_pool3d",
     "nn.functional.multi_head_attention_forward",
-    "nn.functional.multi_margin_loss",
     "nn.functional.multilabel_margin_loss",
-    "nn.functional.pad",
     "nn.functional.pairwise_distance",
     "nn.functional.poisson_nll_loss",
     "nn.functional.rrelu",
-    "nn.functional.triplet_margin_loss",
-    "nn.functional.triplet_margin_with_distance_loss",
-    "nn.functional.unfold",
     "nn.functional.upsample_nearest",
     "nonzero",
     "nonzero_static",
-    "norm",
     "normal",
     "ormqr",
     "pca_lowrank",
-    "pinverse",
-    "polar",
-    "polygamma",
-    "prod",
-    "put",
     "searchsorted",
     "special.airy_ai",
     "special.scaled_modified_bessel_k0",
     "special.scaled_modified_bessel_k1",
     "special.spherical_bessel_j0",
     "special.zeta",
-    "svd",
-    "svd_lowrank",
     "unfold_copy",
     "unfold",
-    "unique_consecutive",
-    "unique",
-    "unravel_index",
-    "var_mean",
-    "nanmean",
-    "nn.functional.upsample_bilinear",
     "randint",
 }
 
 not_support_ops_list = {
   "chalf", # Skip due to jax not support complex32 with backend: https://github.com/google/jax/issues/14180
   "__rpow__",  # NOTE: cannot fix because torch test case has undefined behavior
-                 # such as 0 to negative power.
+               # such as 0 to negative power.
   "ceil", # only failed with python 3.9
   "trunc", # only failed with python 3.9
   "to_sparse", # We are not supporting sparse tensors yet.
@@ -149,6 +113,8 @@ atol_dict = {"linalg.eig": (2e0, 3e0),
              "linalg.eigvalsh": (5e1, 3e0),
              "linalg.pinv": (8e-1, 2e0),
              "linalg.svd": (1e0, 1e0),
+             "svd": (1e0, 1e0),
+             "svd_lowrank": (1e0, 1e0),
              "matrix_exp": (2e-1, 2e-4),
              "cdist": (5e1, 3e0)}
 
@@ -258,7 +224,7 @@ class TestOpInfo(TestCase):
         if 'dtype' in sample_input.kwargs:
           if sample_input.kwargs['dtype'] == torch.int64:
             sample_input.kwargs['dtype'] = torch.float
-      if op.name == "special.polygamma":
+      if op.name == "polygamma" or op.name == "special.polygamma":
         # The polygamma function is inaccurate for values < 1.
         # To avoid errors during testing, replace values below 1 with 1.
         sample_input.input = self.replace_values_below_threshold(
@@ -272,7 +238,7 @@ class TestOpInfo(TestCase):
                              ignore_indices=ignore_index)
 
 
-instantiate_device_type_tests(TestOpInfo, globals())
+instantiate_device_type_tests(TestOpInfo, globals(), only_for='cpu')
 
 if __name__ == '__main__':
   unittest.main()
