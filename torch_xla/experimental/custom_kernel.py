@@ -237,7 +237,8 @@ class FlashAttention(torch.autograd.Function):
     ctx.sm_scale = sm_scale
     ctx.partition_spec = partition_spec
     ctx.mesh = mesh
-    ctx.full_shape = None
+    ctx.q_full_shape = None
+    ctx.kv_full_shape = None
     save_residuals = q.requires_grad or k.requires_grad or v.requires_grad
 
     # SPMD integration.
@@ -247,7 +248,8 @@ class FlashAttention(torch.autograd.Function):
     full_v = v
     full_ab = ab
     if partition_spec is not None:
-      ctx.full_shape = q.shape
+      ctx.q_full_shape = q.shape
+      ctx.kv_full_shape = k.shape
       q = xs.enable_manual_sharding(q, partition_spec, mesh=mesh).global_tensor
       k = xs.enable_manual_sharding(k, partition_spec, mesh=mesh).global_tensor
       v = xs.enable_manual_sharding(v, partition_spec, mesh=mesh).global_tensor
@@ -266,7 +268,15 @@ class FlashAttention(torch.autograd.Function):
         dtypes.append(torch.float32)
 
     with torch.no_grad():
-      segment_ids, q_segment_ids, kv_segment_ids = FlashAttention.prepare_segment_ids(
+      if partition_spec is not None and q_segment_ids is not None and kv_segment_ids is not None:
+        # partition_spec is for q,k,v with shape [batch, num_head, seq_len, head_dim], segment id
+        # is of shape [batch, seq_len], hence we need to tweak it a bit
+        segment_id_partition_spec = (partition_spec[0], partition_spec[2])
+        q_segment_ids = xs.enable_manual_sharding(
+            q_segment_ids, segment_id_partition_spec, mesh=mesh).global_tensor
+        kv_segment_ids = xs.enable_manual_sharding(
+            kv_segment_ids, segment_id_partition_spec, mesh=mesh).global_tensor
+      segment_ids, q_segment_ids_fa, kv_segment_ids_fa = FlashAttention.prepare_segment_ids(
           q_segment_ids, kv_segment_ids)
       ctx.segment_ids = segment_ids
 
@@ -297,7 +307,7 @@ class FlashAttention(torch.autograd.Function):
       if ab is not None:
         args += [ab]
       if segment_ids is not None:
-        args += [q_segment_ids, kv_segment_ids]
+        args += [q_segment_ids_fa, kv_segment_ids_fa]
       o = torch_xla._XLAC._xla_tpu_custom_call(args, payload, shapes, dtypes)
 
       if not save_residuals:
@@ -305,7 +315,7 @@ class FlashAttention(torch.autograd.Function):
         # SPMD integration
         if partition_spec is not None:
           o = xs.disable_manual_sharding(
-              o, partition_spec, ctx.full_shape, mesh=mesh).global_tensor
+              o, partition_spec, ctx.q_full_shape, mesh=mesh).global_tensor
         return o
       o, *aux = o
       l, m = (v[..., 0] for v in aux[-2:])
@@ -313,26 +323,32 @@ class FlashAttention(torch.autograd.Function):
     # SPMD integration
     if partition_spec is not None:
       o = xs.disable_manual_sharding(
-          o, partition_spec, ctx.full_shape, mesh=mesh).global_tensor
+          o, partition_spec, ctx.q_full_shape, mesh=mesh).global_tensor
       l = xs.disable_manual_sharding(
-          l, partition_spec[0:3], ctx.full_shape[0:3], mesh=mesh).global_tensor
+          l, partition_spec[0:3], ctx.q_full_shape[0:3],
+          mesh=mesh).global_tensor
       m = xs.disable_manual_sharding(
-          m, partition_spec[0:3], ctx.full_shape[0:3], mesh=mesh).global_tensor
+          m, partition_spec[0:3], ctx.q_full_shape[0:3],
+          mesh=mesh).global_tensor
 
-    ctx.save_for_backward(full_q, full_k, full_v, o, l, m, q_segment_ids,
-                          kv_segment_ids, full_ab)
+    # q_segment_ids and kv_segment_ids are sharded here if partition_spec is provided
+    # but it should be OK as the backward will use the same partition_spec
+    ctx.save_for_backward(full_q, full_k, full_v, o, l, m, q_segment_ids_fa,
+                          kv_segment_ids_fa, full_ab)
     return o
 
   @staticmethod
   def backward(ctx, grad_output):
     from jax.experimental.pallas.ops.tpu.flash_attention import _flash_attention_bwd_dq, _flash_attention_bwd_dkv
 
-    q, k, v, o, l, m, q_segment_ids, kv_segment_ids, ab = ctx.saved_tensors
+    q, k, v, o, l, m, q_segment_ids_fa, kv_segment_ids_fa, ab = ctx.saved_tensors
     causal = ctx.causal
     sm_scale = ctx.sm_scale
     partition_spec = ctx.partition_spec
     mesh = ctx.mesh
-    full_shape = ctx.full_shape
+    q_full_shape = ctx.q_full_shape
+    kv_full_shape = ctx.kv_full_shape
+    # this segment_ids only reflects the local shape of segment_ids
     segment_ids = ctx.segment_ids
     grad_q = grad_k = grad_v = grad_ab = None
 
@@ -398,7 +414,7 @@ class FlashAttention(torch.autograd.Function):
       if ab is not None:
         args += [ab]
       if segment_ids is not None:
-        args += [q_segment_ids, kv_segment_ids]
+        args += [q_segment_ids_fa, kv_segment_ids_fa]
       args += [expanded_l, expanded_m, grad_output, expanded_grad_i]
 
       outputs = [q]
@@ -456,11 +472,11 @@ class FlashAttention(torch.autograd.Function):
     # SPMD integration
     if partition_spec is not None:
       grad_q = xs.disable_manual_sharding(
-          grad_q, partition_spec, full_shape, mesh=mesh).global_tensor
+          grad_q, partition_spec, q_full_shape, mesh=mesh).global_tensor
       grad_k = xs.disable_manual_sharding(
-          grad_k, partition_spec, full_shape, mesh=mesh).global_tensor
+          grad_k, partition_spec, kv_full_shape, mesh=mesh).global_tensor
       grad_v = xs.disable_manual_sharding(
-          grad_v, partition_spec, full_shape, mesh=mesh).global_tensor
+          grad_v, partition_spec, kv_full_shape, mesh=mesh).global_tensor
 
     return grad_q, grad_k, grad_v, None, None, None, None, grad_ab, None, None
 
