@@ -12,11 +12,14 @@ import torch_xla2
 
 skiplist = {
     "_segment_reduce",
+    "_unsafe_masked_index_put_accumulate",
     "bincount", # NOTE: dtype for int input torch gives float. This is weird.
     "byte",
     "cat",
     "cholesky_solve",
+    "cov",
     "diagonal_copy",
+    "gather",
     "geqrf",
     "histogram", # hard op: AssertionError: Tensor-likes are not close!
     "histogramdd", # TypeError: histogram requires ndarray or scalar arguments, got <class 'list'> at position 1.
@@ -26,14 +29,10 @@ skiplist = {
     "linalg.ldl_solve",
     "linalg.lu_solve",
     "max_pool2d_with_indices_backward",
-    "nn.functional.adaptive_avg_pool3d",
     "nn.functional.adaptive_max_pool1d",
     "nn.functional.adaptive_max_pool2d",
     "nn.functional.adaptive_max_pool3d",
     "nn.functional.alpha_dropout",
-    "nn.functional.conv_transpose1d",
-    "nn.functional.conv_transpose2d",
-    "nn.functional.conv_transpose3d",
     "nn.functional.ctc_loss",
     "nn.functional.dropout2d",
     "nn.functional.dropout3d",
@@ -41,15 +40,14 @@ skiplist = {
     "nn.functional.embedding_bag",
     "nn.functional.fractional_max_pool2d",
     "nn.functional.fractional_max_pool3d",
-    "nn.functional.interpolate",
     "nn.functional.max_pool1d",
     "nn.functional.max_pool2d",
     "nn.functional.max_pool3d",
     "nn.functional.multi_head_attention_forward",
-    "nn.functional.upsample_nearest",
     "normal",
     "ormqr",
     "pca_lowrank",
+    "scatter",
     "searchsorted",
     "special.airy_ai",
     "special.scaled_modified_bessel_k0",
@@ -64,8 +62,6 @@ not_support_ops_list = {
   "chalf", # Skip due to jax not support complex32 with backend: https://github.com/google/jax/issues/14180
   "__rpow__",  # NOTE: cannot fix because torch test case has undefined behavior
                # such as 0 to negative power.
-  "ceil", # only failed with python 3.9
-  "trunc", # only failed with python 3.9
   "to_sparse", # We are not supporting sparse tensors yet.
   "nn.functional.rrelu", # pure torch result match torch_xla2 test result, only OpInfo mismatch: https://gist.github.com/ManfeiBai/1a449b15f4e946bfcaa3e5ef86da20f4
 }
@@ -235,7 +231,7 @@ class TestOpInfo(TestCase):
                              ignore_indices=ignore_index)
 
 
-instantiate_device_type_tests(TestOpInfo, globals(), only_for='cpu')
+instantiate_device_type_tests(TestOpInfo, globals(), only_for={'cpu'})
 
 if __name__ == '__main__':
   unittest.main()
